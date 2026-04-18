@@ -1,9 +1,6 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import profileRoutes from "./routes/profileRoutes.js";
-
-dotenv.config();
 
 const app = express();
 
@@ -12,8 +9,19 @@ app.use(express.json());
 
 app.use("/api/profiles", profileRoutes);
 
+// Health check
 app.get("/", (req, res) => {
   res.send("API is running");
+});
+
+// GLOBAL ERROR HANDLER
+app.use((err, req, res, next) => {
+  console.error("GLOBAL ERROR:", err.stack);
+
+  res.status(500).json({
+    status: "error",
+    message: err.message || "Internal Server Error",
+  });
 });
 
 const PORT = process.env.PORT || 5000;

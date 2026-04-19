@@ -7,7 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use("/api/profiles", profileRoutes);
+app.use("/profiles", profileRoutes);
 
 // Health check
 app.get("/", (req, res) => {

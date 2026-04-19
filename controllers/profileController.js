@@ -7,16 +7,22 @@ import { v4 as uuidv4 } from "uuid";
 // CREATE PROFILE
 export const createProfile = async (req, res, next) => {
   try {
-    const { error } = profileSchema.validate(req.body);
+    const { name } = req.body;
 
-    if (error) {
+    // Validation
+    if (!name) {
       return res.status(400).json({
         status: "error",
-        message: error.details[0].message,
+        message: "Name is required",
       });
     }
 
-    const { name } = req.body;
+    if (typeof name !== "string") {
+      return res.status(422).json({
+        status: "error",
+        message: "Name must be a string",
+      });
+    }
 
     const existing = await pool.query(
       "SELECT * FROM profiles WHERE LOWER(name) = LOWER($1)",
@@ -24,7 +30,7 @@ export const createProfile = async (req, res, next) => {
     );
 
     if (existing.rows.length > 0) {
-      return res.json({
+      return res.status(201).json({
         status: "success",
         source: "cache",
         data: existing.rows[0],
@@ -38,15 +44,24 @@ export const createProfile = async (req, res, next) => {
     ]);
 
     if (!genderRes.data.gender) {
-      return res.status(502).json({ status: "error", message: "Gender API failed" });
+      return res.status(502).json({
+        status: "error",
+        message: "Gender API failed",
+      });
     }
 
     if (!ageRes.data.age) {
-      return res.status(502).json({ status: "error", message: "Age API failed" });
+      return res.status(502).json({
+        status: "error",
+        message: "Age API failed",
+      });
     }
 
     if (!nationRes.data.country.length) {
-      return res.status(502).json({ status: "error", message: "Nation API failed" });
+      return res.status(502).json({
+        status: "error",
+        message: "Nation API failed",
+      });
     }
 
     const topCountry = nationRes.data.country.reduce((a, b) =>
@@ -73,7 +88,7 @@ export const createProfile = async (req, res, next) => {
       Object.values(profile)
     );
 
-    res.status(201).json({
+    return res.status(201).json({
       status: "success",
       source: "api",
       data: profile,
@@ -119,7 +134,7 @@ export const getProfiles = async (req, res, next) => {
 
     const result = await pool.query(query, values);
 
-    res.json({
+    return res.status(200).json({
       status: "success",
       count: result.rows.length,
       data: result.rows,
@@ -146,7 +161,7 @@ export const getProfile = async (req, res, next) => {
       });
     }
 
-    res.json({
+    return res.status(200).json({
       status: "success",
       data: result.rows[0],
     });
@@ -171,7 +186,11 @@ export const deleteProfile = async (req, res, next) => {
       });
     }
 
-    res.status(204).send();
+    // return
+    return res.status(200).json({
+      status: "success",
+      message: "Profile deleted",
+    });
 
   } catch (error) {
     next(error);

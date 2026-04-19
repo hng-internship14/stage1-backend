@@ -100,10 +100,31 @@ export const createProfile = async (req, res, next) => {
   }
 };
 
-// ✅ FIXED: GET ALL (RETURN FULL FIELDS)
+// ✅ FIXED: GET ALL WITH FILTERING
 export const getProfiles = async (req, res, next) => {
   try {
-    const result = await pool.query("SELECT * FROM profiles ORDER BY created_at DESC");
+    let query = "SELECT * FROM profiles WHERE 1=1";
+    let values = [];
+    let index = 1;
+
+    if (req.query.gender) {
+      query += ` AND LOWER(gender) = LOWER($${index++})`;
+      values.push(req.query.gender);
+    }
+
+    if (req.query.age_group) {
+      query += ` AND age_group = $${index++}`;
+      values.push(req.query.age_group);
+    }
+
+    if (req.query.country_id) {
+      query += ` AND country_id = $${index++}`;
+      values.push(req.query.country_id);
+    }
+
+    query += " ORDER BY created_at DESC";
+
+    const result = await pool.query(query, values);
 
     return res.status(200).json({
       status: "success",
@@ -141,7 +162,7 @@ export const getProfile = async (req, res, next) => {
   }
 };
 
-// ✅ FIXED: DELETE RESPONSE
+// ✅ FIXED: DELETE (204 NO CONTENT)
 export const deleteProfile = async (req, res, next) => {
   try {
     const result = await pool.query(
@@ -156,10 +177,7 @@ export const deleteProfile = async (req, res, next) => {
       });
     }
 
-    return res.status(200).json({
-      status: "success",
-      message: "Profile deleted successfully",
-    });
+    return res.status(204).send(); // IMPORTANT
 
   } catch (error) {
     next(error);

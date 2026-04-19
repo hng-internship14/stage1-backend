@@ -8,23 +8,24 @@ export const createProfile = async (req, res, next) => {
   try {
     let { name } = req.body;
 
+    // VALIDATION
     if (!name || typeof name !== "string" || name.trim() === "") {
       return res.status(400).json({
         status: "error",
-        message: "Name is required"
+        message: "Name is required",
       });
     }
 
     if (!isNaN(name)) {
       return res.status(422).json({
         status: "error",
-        message: "Name must be a valid string"
+        message: "Name must be a valid string",
       });
     }
 
     const cleanName = name.trim().toLowerCase();
 
-    // idempotency
+    // IDEMPOTENCY
     const existing = await pool.query(
       "SELECT * FROM profiles WHERE LOWER(name) = $1",
       [cleanName]
@@ -33,35 +34,35 @@ export const createProfile = async (req, res, next) => {
     if (existing.rows.length > 0) {
       return res.status(200).json({
         status: "success",
-        data: existing.rows[0]
+        data: existing.rows[0],
       });
     }
 
-    // external APIs
+    // EXTERNAL APIs
     const [genderRes, ageRes, nationRes] = await Promise.all([
       axios.get(`https://api.genderize.io?name=${cleanName}`),
       axios.get(`https://api.agify.io?name=${cleanName}`),
-      axios.get(`https://api.nationalize.io?name=${cleanName}`)
+      axios.get(`https://api.nationalize.io?name=${cleanName}`),
     ]);
 
     if (!genderRes.data.gender) {
       return res.status(502).json({
         status: "error",
-        message: "Gender API failed"
+        message: "Gender API failed",
       });
     }
 
     if (!ageRes.data.age) {
       return res.status(502).json({
         status: "error",
-        message: "Age API failed"
+        message: "Age API failed",
       });
     }
 
     if (!nationRes.data.country?.length) {
       return res.status(502).json({
         status: "error",
-        message: "Nationality API failed"
+        message: "Nationality API failed",
       });
     }
 
@@ -73,13 +74,13 @@ export const createProfile = async (req, res, next) => {
       id: uuidv4(),
       name: cleanName,
       gender: genderRes.data.gender,
-      gender_probability: genderRes.data.probability,
+      gender_probability: Number(genderRes.data.probability),
       sample_size: genderRes.data.count,
       age: ageRes.data.age,
       age_group: getAgeGroup(ageRes.data.age),
       country_id: topCountry.country_id,
-      country_probability: topCountry.probability,
-      created_at: new Date()
+      country_probability: Number(topCountry.probability),
+      created_at: new Date().toISOString(),
     };
 
     await pool.query(
@@ -91,7 +92,7 @@ export const createProfile = async (req, res, next) => {
 
     return res.status(201).json({
       status: "success",
-      data: profile
+      data: profile,
     });
 
   } catch (error) {
@@ -99,17 +100,15 @@ export const createProfile = async (req, res, next) => {
   }
 };
 
-// GET ALL
+// ✅ FIXED: GET ALL (RETURN FULL FIELDS)
 export const getProfiles = async (req, res, next) => {
   try {
-    const result = await pool.query(
-      "SELECT id, name, gender, age, age_group, country_id FROM profiles"
-    );
+    const result = await pool.query("SELECT * FROM profiles ORDER BY created_at DESC");
 
     return res.status(200).json({
       status: "success",
       count: result.rows.length,
-      data: result.rows
+      data: result.rows,
     });
 
   } catch (error) {
@@ -128,13 +127,13 @@ export const getProfile = async (req, res, next) => {
     if (!result.rows.length) {
       return res.status(404).json({
         status: "error",
-        message: "Profile not found"
+        message: "Profile not found",
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       status: "success",
-      data: result.rows[0]
+      data: result.rows[0],
     });
 
   } catch (error) {
@@ -142,7 +141,7 @@ export const getProfile = async (req, res, next) => {
   }
 };
 
-// DELETE
+// ✅ FIXED: DELETE RESPONSE
 export const deleteProfile = async (req, res, next) => {
   try {
     const result = await pool.query(
@@ -153,11 +152,14 @@ export const deleteProfile = async (req, res, next) => {
     if (!result.rows.length) {
       return res.status(404).json({
         status: "error",
-        message: "Profile not found"
+        message: "Profile not found",
       });
     }
 
-    res.status(204).send();
+    return res.status(200).json({
+      status: "success",
+      message: "Profile deleted successfully",
+    });
 
   } catch (error) {
     next(error);

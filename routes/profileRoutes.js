@@ -4,7 +4,7 @@ import {
   getProfiles,
   getProfile,
   deleteProfile,
-} from "../controllers/profileControllers.js";
+} from "../controllers/profileController";
 
 const router = express.Router();
 

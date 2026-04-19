@@ -5,22 +5,26 @@ import errorMiddleware from "./middlewares/errorMiddleware.js";
 
 const app = express();
 
-// middleware
-app.use(cors());
+
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "DELETE"],
+  allowedHeaders: ["Content-Type"]
+}));
+
 app.use(express.json());
 
-// routes
-app.use("/api/v1/profiles", profileRoutes);
 
-// health check
+app.use("/api/profiles", profileRoutes);
+
+
 app.get("/", (req, res) => {
   res.json({
     status: "success",
-    message: "HNG Stage 1 Backend is running",
+    message: "HNG Stage 1 Backend is running 🚀"
   });
 });
 
-// error handler (MUST be last)
 app.use(errorMiddleware);
 
 export default app;

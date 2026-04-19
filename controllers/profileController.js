@@ -1,38 +1,30 @@
 import axios from "axios";
 import { pool } from "../config/db.js";
 import { getAgeGroup } from "../utils/helpers.js";
-import { v4 as uuidv4 } from "uuid";
+import { v7 as uuidv7 } from "uuid";   // Correct import from 'uuid' package
 
 // CREATE PROFILE
 export const createProfile = async (req, res, next) => {
   try {
     let { name } = req.body;
 
-    // VALIDATION
-    if (!name || typeof name !== "string") {
+    if (!name || typeof name !== "string" || name.trim().length === 0) {
       return res.status(400).json({
         status: "error",
-        message: "Name is required and must be a string",
+        message: "Name is required and must be a non-empty string"
       });
     }
 
     name = name.trim();
+    const cleanName = name.toLowerCase();
 
-    if (name.length < 2) {
-      return res.status(400).json({
-        status: "error",
-        message: "Name must be at least 2 characters",
-      });
-    }
-
-    if (!isNaN(name)) {
+    // 
+    if (!isNaN(Number(name)) && name.trim() !== "") {
       return res.status(422).json({
         status: "error",
-        message: "Name must be a valid string",
+        message: "Name must be a valid string"
       });
     }
-
-    const cleanName = name.toLowerCase();
 
     // IDEMPOTENCY
     const existing = await pool.query(
@@ -44,52 +36,83 @@ export const createProfile = async (req, res, next) => {
       return res.status(200).json({
         status: "success",
         message: "Profile already exists",
-        data: existing.rows[0],
+        data: existing.rows[0]
       });
     }
 
-    // API CALLS (SAFE)
+    // Call the three external APIs
     const [genderRes, ageRes, nationRes] = await Promise.allSettled([
       axios.get(`https://api.genderize.io?name=${cleanName}`),
       axios.get(`https://api.agify.io?name=${cleanName}`),
-      axios.get(`https://api.nationalize.io?name=${cleanName}`),
+      axios.get(`https://api.nationalize.io?name=${cleanName}`)
     ]);
 
-    const genderData = genderRes.status === "fulfilled" ? genderRes.value.data : {};
-    const ageData = ageRes.status === "fulfilled" ? ageRes.value.data : {};
-    const nationData = nationRes.status === "fulfilled" ? nationRes.value.data : {};
+    const genderData = genderRes.status === "fulfilled" ? genderRes.value.data : null;
+    const ageData = ageRes.status === "fulfilled" ? ageRes.value.data : null;
+    const nationData = nationRes.status === "fulfilled" ? nationRes.value.data : null;
 
-    const topCountry =
-      nationData.country?.length > 0
-        ? nationData.country.reduce((a, b) =>
-            a.probability > b.probability ? a : b
-          )
-        : null;
+    // === EDGE CASES - Return 502 exactly as task requires ===
+    if (!genderData || genderData.gender === null || (genderData.count || 0) === 0) {
+      return res.status(502).json({
+        status: "error",
+        message: "Genderize returned an invalid response"
+      });
+    }
+
+    if (!ageData || ageData.age === null) {
+      return res.status(502).json({
+        status: "error",
+        message: "Agify returned an invalid response"
+      });
+    }
+
+    if (!nationData || !nationData.country || nationData.country.length === 0) {
+      return res.status(502).json({
+        status: "error",
+        message: "Nationalize returned an invalid response"
+      });
+    }
+
+    const topCountry = nationData.country.reduce((a, b) =>
+      a.probability > b.probability ? a : b
+    );
 
     const profile = {
-      id: uuidv4(),
+      id: uuidv7(),
       name: cleanName,
-      gender: genderData.gender || "unknown",
-      gender_probability: genderData.probability || 0,
+      gender: genderData.gender,
+      gender_probability: Number(genderData.probability?.toFixed(2)) || 0,
       sample_size: genderData.count || 0,
-      age: ageData.age || null,
-      age_group: ageData.age ? getAgeGroup(ageData.age) : "unknown",
-      country_id: topCountry?.country_id || "unknown",
-      country_probability: topCountry?.probability || 0,
-      created_at: new Date(),
+      age: ageData.age,
+      age_group: getAgeGroup(ageData.age),
+      country_id: topCountry.country_id,
+      country_probability: Number(topCountry.probability?.toFixed(2)) || 0,
+      created_at: new Date().toISOString()
     };
 
+    // Insert into database
     await pool.query(
       `INSERT INTO profiles 
-      (id, name, gender, gender_probability, sample_size, age, age_group, country_id, country_probability, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      Object.values(profile)
+       (id, name, gender, gender_probability, sample_size, age, age_group, 
+        country_id, country_probability, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        profile.id,
+        profile.name,
+        profile.gender,
+        profile.gender_probability,
+        profile.sample_size,
+        profile.age,
+        profile.age_group,
+        profile.country_id,
+        profile.country_probability,
+        profile.created_at
+      ]
     );
 
     return res.status(201).json({
       status: "success",
-      message: "Profile created",
-      data: profile,
+      data: profile
     });
 
   } catch (error) {
@@ -98,56 +121,39 @@ export const createProfile = async (req, res, next) => {
   }
 };
 
-
-
 // GET ALL PROFILES
 export const getProfiles = async (req, res, next) => {
   try {
-    let query = "SELECT * FROM profiles WHERE 1=1";
+    let query = "SELECT id, name, gender, age, age_group, country_id FROM profiles WHERE 1=1";
     const values = [];
+    let paramCount = 0;
 
-    // 🔍 FILTERS
     if (req.query.gender) {
+      paramCount++;
       values.push(req.query.gender.toLowerCase());
-      query += ` AND LOWER(gender) = $${values.length}`;
+      query += ` AND LOWER(gender) = $${paramCount}`;
     }
 
     if (req.query.country_id) {
+      paramCount++;
       values.push(req.query.country_id.toUpperCase());
-      query += ` AND country_id = $${values.length}`;
+      query += ` AND UPPER(country_id) = $${paramCount}`;
     }
 
     if (req.query.age_group) {
+      paramCount++;
       values.push(req.query.age_group.toLowerCase());
-      query += ` AND LOWER(age_group) = $${values.length}`;
+      query += ` AND LOWER(age_group) = $${paramCount}`;
     }
 
-    // 🔒 SAFE SORTING
-    const allowedSort = ["name", "age", "created_at"];
-    const sortBy = allowedSort.includes(req.query.sort_by)
-      ? req.query.sort_by
-      : "created_at";
-
-    const order =
-      req.query.order && req.query.order.toLowerCase() === "asc"
-        ? "ASC"
-        : "DESC";
-
-    query += ` ORDER BY ${sortBy} ${order}`;
-
-    // 📄 PAGINATION
-    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
-    const offset = parseInt(req.query.offset) || 0;
-
-    values.push(limit, offset);
-    query += ` LIMIT $${values.length - 1} OFFSET $${values.length}`;
+    query += " ORDER BY created_at DESC";
 
     const result = await pool.query(query, values);
 
     return res.status(200).json({
       status: "success",
       count: result.rows.length,
-      data: result.rows,
+      data: result.rows
     });
 
   } catch (error) {
@@ -155,8 +161,6 @@ export const getProfiles = async (req, res, next) => {
     next(error);
   }
 };
-
-
 
 // GET SINGLE PROFILE
 export const getProfile = async (req, res, next) => {
@@ -166,16 +170,16 @@ export const getProfile = async (req, res, next) => {
       [req.params.id]
     );
 
-    if (!result.rows.length) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         status: "error",
-        message: "Profile not found",
+        message: "Profile not found"
       });
     }
 
     return res.status(200).json({
       status: "success",
-      data: result.rows[0],
+      data: result.rows[0]
     });
 
   } catch (error) {
@@ -183,8 +187,6 @@ export const getProfile = async (req, res, next) => {
     next(error);
   }
 };
-
-
 
 // DELETE PROFILE
 export const deleteProfile = async (req, res, next) => {
@@ -194,17 +196,14 @@ export const deleteProfile = async (req, res, next) => {
       [req.params.id]
     );
 
-    if (!result.rows.length) {
+    if (result.rows.length === 0) {
       return res.status(404).json({
         status: "error",
-        message: "Profile not found",
+        message: "Profile not found"
       });
     }
 
-    return res.status(200).json({
-      status: "success",
-      message: "Profile deleted successfully",
-    });
+    return res.status(204).send();
 
   } catch (error) {
     console.error("DELETE PROFILE ERROR:", error);

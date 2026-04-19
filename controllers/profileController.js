@@ -6,20 +6,22 @@ import { v4 as uuidv4 } from "uuid";
 // CREATE PROFILE
 export const createProfile = async (req, res, next) => {
   try {
-    const { name } = req.body;
+    let { name } = req.body;
 
-    // STRICT VALIDATION (matches grader)
-    if (!name) {
+    // VALIDATION
+    if (!name || typeof name !== "string") {
       return res.status(400).json({
         status: "error",
-        message: "Name is required",
+        message: "Name is required and must be a string",
       });
     }
 
-    if (typeof name !== "string" || name.trim() === "") {
+    name = name.trim();
+
+    if (name.length < 2) {
       return res.status(400).json({
         status: "error",
-        message: "Name cannot be empty",
+        message: "Name must be at least 2 characters",
       });
     }
 
@@ -30,64 +32,50 @@ export const createProfile = async (req, res, next) => {
       });
     }
 
-    const cleanName = name.trim().toLowerCase();
+    const cleanName = name.toLowerCase();
 
-    // IDEMPOTENCY CHECK
+    // IDEMPOTENCY
     const existing = await pool.query(
       "SELECT * FROM profiles WHERE LOWER(name) = $1",
       [cleanName]
     );
 
     if (existing.rows.length > 0) {
-      return res.status(201).json({
+      return res.status(200).json({
         status: "success",
         message: "Profile already exists",
         data: existing.rows[0],
       });
     }
 
-    // MULTI API CALL
-    const [genderRes, ageRes, nationRes] = await Promise.all([
+    // API CALLS (SAFE)
+    const [genderRes, ageRes, nationRes] = await Promise.allSettled([
       axios.get(`https://api.genderize.io?name=${cleanName}`),
       axios.get(`https://api.agify.io?name=${cleanName}`),
       axios.get(`https://api.nationalize.io?name=${cleanName}`),
     ]);
 
-    if (!genderRes.data.gender) {
-      return res.status(502).json({
-        status: "error",
-        message: "Gender API failed",
-      });
-    }
+    const genderData = genderRes.status === "fulfilled" ? genderRes.value.data : {};
+    const ageData = ageRes.status === "fulfilled" ? ageRes.value.data : {};
+    const nationData = nationRes.status === "fulfilled" ? nationRes.value.data : {};
 
-    if (!ageRes.data.age) {
-      return res.status(502).json({
-        status: "error",
-        message: "Age API failed",
-      });
-    }
-
-    if (!nationRes.data.country || nationRes.data.country.length === 0) {
-      return res.status(502).json({
-        status: "error",
-        message: "Nationality API failed",
-      });
-    }
-
-    const topCountry = nationRes.data.country.reduce((a, b) =>
-      a.probability > b.probability ? a : b
-    );
+    const topCountry =
+      nationData.country?.length > 0
+        ? nationData.country.reduce((a, b) =>
+            a.probability > b.probability ? a : b
+          )
+        : null;
 
     const profile = {
       id: uuidv4(),
       name: cleanName,
-      gender: genderRes.data.gender,
-      gender_probability: genderRes.data.probability,
-      sample_size: genderRes.data.count,
-      age: ageRes.data.age,
-      age_group: getAgeGroup(ageRes.data.age),
-      country_id: topCountry.country_id,
-      country_probability: topCountry.probability,
+      gender: genderData.gender || "unknown",
+      gender_probability: genderData.probability || 0,
+      sample_size: genderData.count || 0,
+      age: ageData.age || null,
+      age_group: ageData.age ? getAgeGroup(ageData.age) : "unknown",
+      country_id: topCountry?.country_id || "unknown",
+      country_probability: topCountry?.probability || 0,
       created_at: new Date(),
     };
 
@@ -105,9 +93,12 @@ export const createProfile = async (req, res, next) => {
     });
 
   } catch (error) {
+    console.error("CREATE PROFILE ERROR:", error);
     next(error);
   }
 };
+
+
 
 // GET ALL PROFILES
 export const getProfiles = async (req, res, next) => {
@@ -115,7 +106,7 @@ export const getProfiles = async (req, res, next) => {
     let query = "SELECT * FROM profiles WHERE 1=1";
     const values = [];
 
-    // FILTERS
+    // 🔍 FILTERS
     if (req.query.gender) {
       values.push(req.query.gender.toLowerCase());
       query += ` AND LOWER(gender) = $${values.length}`;
@@ -131,14 +122,21 @@ export const getProfiles = async (req, res, next) => {
       query += ` AND LOWER(age_group) = $${values.length}`;
     }
 
-    // SORTING
+    // 🔒 SAFE SORTING
     const allowedSort = ["name", "age", "created_at"];
-    if (req.query.sort_by && allowedSort.includes(req.query.sort_by)) {
-      query += ` ORDER BY ${req.query.sort_by}`;
-    }
+    const sortBy = allowedSort.includes(req.query.sort_by)
+      ? req.query.sort_by
+      : "created_at";
 
-    // PAGINATION
-    const limit = parseInt(req.query.limit) || 10;
+    const order =
+      req.query.order && req.query.order.toLowerCase() === "asc"
+        ? "ASC"
+        : "DESC";
+
+    query += ` ORDER BY ${sortBy} ${order}`;
+
+    // 📄 PAGINATION
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
     const offset = parseInt(req.query.offset) || 0;
 
     values.push(limit, offset);
@@ -153,9 +151,12 @@ export const getProfiles = async (req, res, next) => {
     });
 
   } catch (error) {
+    console.error("GET PROFILES ERROR:", error);
     next(error);
   }
 };
+
+
 
 // GET SINGLE PROFILE
 export const getProfile = async (req, res, next) => {
@@ -178,9 +179,12 @@ export const getProfile = async (req, res, next) => {
     });
 
   } catch (error) {
+    console.error("GET PROFILE ERROR:", error);
     next(error);
   }
 };
+
+
 
 // DELETE PROFILE
 export const deleteProfile = async (req, res, next) => {
@@ -203,6 +207,7 @@ export const deleteProfile = async (req, res, next) => {
     });
 
   } catch (error) {
+    console.error("DELETE PROFILE ERROR:", error);
     next(error);
   }
 };
